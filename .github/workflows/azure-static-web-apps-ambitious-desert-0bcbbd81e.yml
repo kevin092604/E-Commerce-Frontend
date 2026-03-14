@@ -9,90 +9,92 @@ on:
     branches:
       - main
 
-env:
-  # Forzar Node.js 24 para compatibilidad futura
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  # Variables globales que podrías necesitar
-  NODE_VERSION: '20'
-
 jobs:
   build_and_deploy_job:
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed')
     runs-on: ubuntu-latest
     name: Build and Deploy Job
-    
-    steps:
-      # 1. Limpiar git config (soluciona problemas de extraheader)
-      - name: Limpiar git extraheader
-        run: |
-          git config --global --remove-section http.https://github.com 2>/dev/null || true
-          git config --global --remove-section credential 2>/dev/null || true
-          git config --global --list | grep -i github || echo "Git config limpio"
 
-      # 2. Checkout del repositorio con submodules
-      - name: Checkout del repositorio
-        uses: actions/checkout@v4
+    steps:
+      # ✅ Checkout con versión más reciente
+      - name: Checkout
+        uses: actions/checkout@v4.2.0
         with:
           submodules: true
           lfs: false
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      # 3. Setup Node.js (si tu proyecto lo requiere)
+      # ✅ Setup Node.js 20 (compatible con futuros cambios)
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v4.1.0
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: '20'
           cache: 'npm'
 
-      # 4. Instalar dependencias (si tienes package.json)
+      # ✅ Instalar dependencias
       - name: Instalar dependencias
         run: npm ci --prefer-offline --no-audit
+
+      # ✅ Lint (opcional)
+      - name: Lint
+        run: npm run lint --if-present
         continue-on-error: true
 
-      # 5. Ejecutar tests (opcional)
-      - name: Ejecutar tests
-        run: npm test --if-present
+      # ✅ Tests (opcional)
+      - name: Tests
+        run: npm test --if-present -- --coverage --watchAll=false --passWithNoTests
         continue-on-error: true
 
-      # 6. Build de la aplicación
-      - name: Build de la aplicación
+      # ✅ Build de producción
+      - name: Build
         run: npm run build --if-present
-        continue-on-error: true
+        env:
+          CI: true
+          NODE_ENV: production
 
-      # 7. Deploy a Azure Static Web Apps
-      - name: Build And Deploy
+      # ✅ Deploy a Azure Static Web Apps
+      - name: Deploy a Azure
         id: builddeploy
         uses: Azure/static-web-apps-deploy@v1
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_AMBITIOUS_DESERT_0BCBBD81E }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: "upload"
-          app_location: "/"                    # Ruta del código fuente
-          api_location: ""                     # Opcional: API Functions
-          output_location: "build"             # Carpeta de salida compilada
+          app_location: "/"
+          api_location: ""
+          output_location: "build"
 
-      # 8. Mostrar la URL de la aplicación
-      - name: Mostrar URL de la aplicación
+      # ✅ Logs de éxito
+      - name: ✅ Deploy Exitoso
         if: success()
         run: |
-          echo "✅ Deploy exitoso"
+          echo "=========================================="
+          echo "✅ Deploy completado exitosamente"
+          echo "=========================================="
           echo "URL: ${{ steps.builddeploy.outputs.static_web_app_url }}"
+          echo "Rama: ${{ github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "=========================================="
 
-      # 9. Notificar en caso de error
-      - name: Notificar error
+      # ⚠️ Logs de error
+      - name: ❌ Deploy Falló
         if: failure()
         run: |
+          echo "=========================================="
           echo "❌ El deploy falló"
-          echo "Ver logs para más detalles: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "=========================================="
+          echo "Repositorio: ${{ github.repository }}"
+          echo "Rama: ${{ github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "=========================================="
 
   close_pull_request_job:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
     runs-on: ubuntu-latest
     name: Close Pull Request Job
-    
+
     steps:
-      # Cerrar ambiente de preview en Azure
       - name: Close Pull Request
         id: closepullrequest
         uses: Azure/static-web-apps-deploy@v1
@@ -100,6 +102,5 @@ jobs:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_AMBITIOUS_DESERT_0BCBBD81E }}
           action: "close"
 
-      # Confirmar cierre
-      - name: Confirmar cierre
+      - name: ✅ Environment cerrado
         run: echo "✅ Preview environment eliminado para PR #${{ github.event.pull_request.number }}"
