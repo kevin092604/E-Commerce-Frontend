@@ -9,26 +9,58 @@ on:
     branches:
       - main
 
+env:
+  # Forzar Node.js 24 para compatibilidad futura
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # Variables globales que podrías necesitar
+  NODE_VERSION: '20'
+
 jobs:
   build_and_deploy_job:
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed')
     runs-on: ubuntu-latest
     name: Build and Deploy Job
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    
     steps:
-      # Limpiar cualquier extraheader de git antes del checkout
+      # 1. Limpiar git config (soluciona problemas de extraheader)
       - name: Limpiar git extraheader
-        run: git config --global --unset-all http.https://github.com/.extraheader || true
+        run: |
+          git config --global --remove-section http.https://github.com 2>/dev/null || true
+          git config --global --remove-section credential 2>/dev/null || true
+          git config --global --list | grep -i github || echo "Git config limpio"
 
-      # Checkout del repositorio
-      - uses: actions/checkout@v4
+      # 2. Checkout del repositorio con submodules
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
         with:
           submodules: true
           lfs: false
-          fetch-depth: 0   # Previene problemas de .extraheader y permite fetch completo
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build y Deploy
+      # 3. Setup Node.js (si tu proyecto lo requiere)
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      # 4. Instalar dependencias (si tienes package.json)
+      - name: Instalar dependencias
+        run: npm ci --prefer-offline --no-audit
+        continue-on-error: true
+
+      # 5. Ejecutar tests (opcional)
+      - name: Ejecutar tests
+        run: npm test --if-present
+        continue-on-error: true
+
+      # 6. Build de la aplicación
+      - name: Build de la aplicación
+        run: npm run build --if-present
+        continue-on-error: true
+
+      # 7. Deploy a Azure Static Web Apps
       - name: Build And Deploy
         id: builddeploy
         uses: Azure/static-web-apps-deploy@v1
@@ -36,18 +68,38 @@ jobs:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_AMBITIOUS_DESERT_0BCBBD81E }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: "upload"
-          app_location: "/"        # Ruta del código fuente de la app
-          api_location: ""         # Opcional
-          output_location: "build" # Carpeta de contenido compilado
+          app_location: "/"                    # Ruta del código fuente
+          api_location: ""                     # Opcional: API Functions
+          output_location: "build"             # Carpeta de salida compilada
+
+      # 8. Mostrar la URL de la aplicación
+      - name: Mostrar URL de la aplicación
+        if: success()
+        run: |
+          echo "✅ Deploy exitoso"
+          echo "URL: ${{ steps.builddeploy.outputs.static_web_app_url }}"
+
+      # 9. Notificar en caso de error
+      - name: Notificar error
+        if: failure()
+        run: |
+          echo "❌ El deploy falló"
+          echo "Ver logs para más detalles: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
   close_pull_request_job:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
     runs-on: ubuntu-latest
     name: Close Pull Request Job
+    
     steps:
+      # Cerrar ambiente de preview en Azure
       - name: Close Pull Request
         id: closepullrequest
         uses: Azure/static-web-apps-deploy@v1
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_AMBITIOUS_DESERT_0BCBBD81E }}
           action: "close"
+
+      # Confirmar cierre
+      - name: Confirmar cierre
+        run: echo "✅ Preview environment eliminado para PR #${{ github.event.pull_request.number }}"
